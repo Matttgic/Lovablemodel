@@ -8,10 +8,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY model.json .
 COPY main.py .
 
-# On retire la ligne ENV PORT=8000 pour laisser l'hébergeur décider
-ENV MODEL_PATH=model.json
-
-# On expose le port 8080 qui semble être celui par défaut de votre hébergeur
-EXPOSE 8080
-
-CMD ["python", "main.py"]
+# On n'impose pas de port via ENV, on laisse l'hébergeur décider.
+# Cette commande CMD utilise directement la variable $PORT injectée par l'hébergeur.
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
