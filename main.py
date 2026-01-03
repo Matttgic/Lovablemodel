@@ -1,5 +1,5 @@
 """
-FastAPI Backend for XGBoost Premier League Predictions
+FastAPI Backend for XGBoost European Predictions
 Deploy on Railway, Fly.io, or Render
 
 Features: h_gf, h_ga, h_cs, h_fw, h_fd, h_fl, a_gf, a_ga, a_cs, a_fw, a_fd, a_fl
@@ -9,13 +9,13 @@ import os
 import httpx
 import xgboost as xgb
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
-app = FastAPI(title="XGBoost Premier League Predictions API")
+app = FastAPI(title="XGBoost European Football Predictions API")
 
 # CORS for frontend access
 app.add_middleware(
@@ -34,19 +34,27 @@ model.load_model(MODEL_PATH)
 # API-Football configuration
 API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY")
 API_FOOTBALL_URL = "https://v3.football.api-sports.io"
-PREMIER_LEAGUE_ID = 39
 CURRENT_SEASON = 2025
 
+# Configuration des 5 grands championnats
+LEAGUES = {
+    "Premier League": 39,
+    "Ligue 1": 61,
+    "Bundesliga": 78,
+    "Serie A": 135,
+    "La Liga": 140
+}
 
 class PredictionRequest(BaseModel):
     """Request format from Edge Function"""
     match_id: int
-    features: dict  # {home_gf, home_ga, home_cs, home_fw, home_fd, home_fl, away_gf, away_ga, away_cs, away_fw, away_fd, away_fl}
-    odds: Optional[dict] = None  # {home_win, draw, away_win}
-
+    features: dict
+    odds: Optional[dict] = None
 
 class PredictionResponse(BaseModel):
     fixture_id: int
+    league_id: int
+    league_name: str
     home_team: str
     away_team: str
     date: str
@@ -55,11 +63,9 @@ class PredictionResponse(BaseModel):
     odds: Optional[dict]
     value_bets: list
 
-
 class MatchListResponse(BaseModel):
     matches: list
     count: int
-
 
 async def fetch_api_football(endpoint: str, params: dict = None):
     """Fetch data from API-Football"""
@@ -77,12 +83,12 @@ async def fetch_api_football(endpoint: str, params: dict = None):
             raise HTTPException(status_code=response.status_code, detail="API-Football error")
         return response.json()
 
-
-async def get_team_stats(team_id: int) -> dict:
-    """Get team statistics for the current season"""
+async def get_team_stats(team_id: int, league_id: int) -> dict:
+    """Get team statistics for the current season in a specific league"""
+    # Note: On passe league_id dynamiquement ici
     data = await fetch_api_football("teams/statistics", {
         "team": team_id,
-        "league": PREMIER_LEAGUE_ID,
+        "league": league_id,
         "season": CURRENT_SEASON
     })
     
@@ -94,7 +100,6 @@ async def get_team_stats(team_id: int) -> dict:
     goals = stats.get("goals", {})
     clean_sheets = stats.get("clean_sheet", {})
     
-    # Calculate stats
     played = fixtures.get("played", {}).get("total", 0) or 1
     wins = fixtures.get("wins", {}).get("total", 0)
     draws = fixtures.get("draws", {}).get("total", 0)
@@ -104,14 +109,13 @@ async def get_team_stats(team_id: int) -> dict:
     cs_total = clean_sheets.get("total", 0)
     
     return {
-        "gf": round(goals_for / played, 2),  # Goals per match
-        "ga": round(goals_against / played, 2),  # Goals against per match
-        "cs": cs_total,  # Clean sheets
-        "fw": wins,  # Form wins
-        "fd": draws,  # Form draws
-        "fl": loses  # Form losses
+        "gf": round(goals_for / played, 2),
+        "ga": round(goals_against / played, 2),
+        "cs": cs_total,
+        "fw": wins,
+        "fd": draws,
+        "fl": loses
     }
-
 
 async def get_odds(fixture_id: int) -> Optional[dict]:
     """Get Bet365 odds for a fixture"""
@@ -147,7 +151,6 @@ async def get_odds(fixture_id: int) -> Optional[dict]:
     except Exception:
         return None
 
-
 def calculate_value_bets(predictions: dict, odds: dict) -> list:
     """Calculate value bets based on Kelly criterion"""
     value_bets = []
@@ -176,37 +179,25 @@ def calculate_value_bets(predictions: dict, odds: dict) -> list:
     
     return sorted(value_bets, key=lambda x: x["expected_value"], reverse=True)
 
-
 @app.get("/")
 async def root():
-    return {"status": "ok", "model": "XGBoost Premier League Classifier"}
-
+    return {
+        "status": "ok", 
+        "model": "XGBoost European Classifier", 
+        "supported_leagues": LEAGUES
+    }
 
 @app.post("/predict")
 async def predict_from_features(request: PredictionRequest):
-    """
-    Predict match outcome using pre-calculated features from Edge Function.
-    This endpoint receives features already calculated by the Edge Function.
-    """
+    """Predict match outcome using pre-calculated features."""
     features = request.features
-    
-    # Build features array (12 features) from the request
     feature_array = np.array([[
-        features.get("home_gf", 0),
-        features.get("home_ga", 0),
-        features.get("home_cs", 0),
-        features.get("home_fw", 0),
-        features.get("home_fd", 0),
-        features.get("home_fl", 0),
-        features.get("away_gf", 0),
-        features.get("away_ga", 0),
-        features.get("away_cs", 0),
-        features.get("away_fw", 0),
-        features.get("away_fd", 0),
-        features.get("away_fl", 0),
+        features.get("home_gf", 0), features.get("home_ga", 0), features.get("home_cs", 0),
+        features.get("home_fw", 0), features.get("home_fd", 0), features.get("home_fl", 0),
+        features.get("away_gf", 0), features.get("away_ga", 0), features.get("away_cs", 0),
+        features.get("away_fw", 0), features.get("away_fd", 0), features.get("away_fl", 0),
     ]])
     
-    # Get predictions from XGBoost model
     probabilities = model.predict_proba(feature_array)[0]
     predictions = {
         "home_win": round(float(probabilities[0]), 4),
@@ -214,7 +205,6 @@ async def predict_from_features(request: PredictionRequest):
         "away_win": round(float(probabilities[2]), 4)
     }
     
-    # Calculate value bets if odds are provided
     value_bets = []
     if request.odds:
         odds_mapped = {
@@ -235,12 +225,11 @@ async def predict_from_features(request: PredictionRequest):
         "value_bets": value_bets
     }
 
-
 @app.get("/matches", response_model=MatchListResponse)
-async def get_upcoming_matches():
-    """Get upcoming Premier League matches"""
+async def get_upcoming_matches(league_id: int = Query(39, description="League ID (39=PL, 61=L1, 78=BL, 135=SA, 140=LL)")):
+    """Get upcoming matches for a specific league (Default: Premier League)"""
     data = await fetch_api_football("fixtures", {
-        "league": PREMIER_LEAGUE_ID,
+        "league": league_id,
         "season": CURRENT_SEASON,
         "next": 20
     })
@@ -259,42 +248,33 @@ async def get_upcoming_matches():
     
     return {"matches": matches, "count": len(matches)}
 
-
 @app.get("/predict/{fixture_id}", response_model=PredictionResponse)
 async def predict_match(fixture_id: int):
-    """Predict match outcome using XGBoost model"""
+    """Predict match outcome dynamically detecting the league"""
     
-    # Get fixture info
+    # 1. Get fixture info to identify the league
     data = await fetch_api_football("fixtures", {"id": fixture_id})
     
     if not data.get("response"):
         raise HTTPException(status_code=404, detail="Match not found")
     
     fixture = data["response"][0]
+    league_data = fixture["league"]
+    league_id = league_data["id"]
     home_team = fixture["teams"]["home"]
     away_team = fixture["teams"]["away"]
     
-    # Get team statistics
-    home_stats = await get_team_stats(home_team["id"])
-    away_stats = await get_team_stats(away_team["id"])
+    # 2. Get team statistics using the detected league_id
+    home_stats = await get_team_stats(home_team["id"], league_id)
+    away_stats = await get_team_stats(away_team["id"], league_id)
     
-    # Build features array (12 features)
+    # Build features
     features = np.array([[
-        home_stats["gf"],  # h_gf
-        home_stats["ga"],  # h_ga
-        home_stats["cs"],  # h_cs
-        home_stats["fw"],  # h_fw
-        home_stats["fd"],  # h_fd
-        home_stats["fl"],  # h_fl
-        away_stats["gf"],  # a_gf
-        away_stats["ga"],  # a_ga
-        away_stats["cs"],  # a_cs
-        away_stats["fw"],  # a_fw
-        away_stats["fd"],  # a_fd
-        away_stats["fl"],  # a_fl
+        home_stats["gf"], home_stats["ga"], home_stats["cs"], home_stats["fw"], home_stats["fd"], home_stats["fl"],
+        away_stats["gf"], away_stats["ga"], away_stats["cs"], away_stats["fw"], away_stats["fd"], away_stats["fl"],
     ]])
     
-    # Get predictions
+    # Predict
     probabilities = model.predict_proba(features)[0]
     predictions = {
         "home": round(float(probabilities[0]), 4),
@@ -302,54 +282,25 @@ async def predict_match(fixture_id: int):
         "away": round(float(probabilities[2]), 4)
     }
     
-    # Get odds
     odds = await get_odds(fixture_id)
-    
-    # Calculate value bets
     value_bets = []
     if odds:
         value_bets = calculate_value_bets(predictions, odds)
     
     return PredictionResponse(
         fixture_id=fixture_id,
+        league_id=league_id,
+        league_name=league_data["name"],
         home_team=home_team["name"],
         away_team=away_team["name"],
         date=fixture["fixture"]["date"],
-        features={
-            "home": home_stats,
-            "away": away_stats
-        },
+        features={"home": home_stats, "away": away_stats},
         predictions=predictions,
         odds=odds,
         value_bets=value_bets
     )
 
-
-@app.get("/predict-all")
-async def predict_all_matches():
-    """Predict all upcoming Premier League matches"""
-    matches_data = await get_upcoming_matches()
-    predictions = []
-    
-    for match in matches_data["matches"][:10]:  # Limit to 10 to avoid rate limits
-        try:
-            prediction = await predict_match(match["fixture_id"])
-            predictions.append(prediction.dict())
-        except Exception as e:
-            predictions.append({
-                "fixture_id": match["fixture_id"],
-                "error": str(e),
-                "home_team": match["home_team"],
-                "away_team": match["away_team"]
-            })
-    
-    return {
-        "predictions": predictions,
-        "count": len(predictions),
-        "generated_at": datetime.utcnow().isoformat()
-    }
-
-
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+ 
