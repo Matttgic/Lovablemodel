@@ -8,6 +8,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY model.json .
 COPY main.py .
 
-# On supprime EXPOSE pour éviter les conflits, l'hébergeur gérera le port via la variable $PORT
-# On utilise ["sh", "-c", ...] pour garantir que la variable ${PORT} est bien lue
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# 'exec' stabilise le processus
+# '--workers 1' réduit la consommation de mémoire pour éviter les crashs
+CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
