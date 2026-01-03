@@ -3,11 +3,11 @@ FROM python:3.11-slim
 WORKDIR /app
 
 COPY requirements.txt .
+# On installe les dépendances
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY model.json .
 COPY main.py .
 
-# 'exec' stabilise le processus
-# '--workers 1' réduit la consommation de mémoire pour éviter les crashs
-CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
+# On force le port 8080 et on ajoute --proxy-headers pour la compatibilité cloud
+CMD uvicorn main:app --host 0.0.0.0 --port 8080 --workers 1 --proxy-headers
