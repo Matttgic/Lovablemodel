@@ -8,6 +8,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY model.json .
 COPY main.py .
 
-# On n'impose pas de port via ENV, on laisse l'hébergeur décider.
-# Cette commande CMD utilise directement la variable $PORT injectée par l'hébergeur.
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
+# On supprime EXPOSE pour éviter les conflits, l'hébergeur gérera le port via la variable $PORT
+# On utilise ["sh", "-c", ...] pour garantir que la variable ${PORT} est bien lue
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
