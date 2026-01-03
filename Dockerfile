@@ -8,9 +8,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY model.json .
 COPY main.py .
 
-ENV PORT=8000
+# On retire la ligne ENV PORT=8000 pour laisser l'hébergeur décider
 ENV MODEL_PATH=model.json
 
-EXPOSE 8000
+# On expose le port 8080 qui semble être celui par défaut de votre hébergeur
+EXPOSE 8080
 
 CMD ["python", "main.py"]
